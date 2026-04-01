@@ -9,6 +9,29 @@ use agent_permissions::PermissionMode;
 use agent_provider::ModelProvider;
 use agent_tools::{ToolOrchestrator, ToolRegistry};
 
+/// Output format for non-interactive (print/query) mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutputFormat {
+    /// Plain text — assistant text only, streamed to stdout.
+    Text,
+    /// Newline-delimited JSON events (one JSON object per line).
+    StreamJson,
+    /// Single JSON object written after the turn completes.
+    Json,
+}
+
+impl std::str::FromStr for OutputFormat {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "text" => Ok(OutputFormat::Text),
+            "stream-json" => Ok(OutputFormat::StreamJson),
+            "json" => Ok(OutputFormat::Json),
+            other => anyhow::bail!("unknown output format '{}' (text|stream-json|json)", other),
+        }
+    }
+}
+
 /// Claude Code Rust — a modular agent runtime.
 #[derive(Parser, Debug)]
 #[command(name = "claude", version, about)]
@@ -30,9 +53,17 @@ struct Cli {
     #[arg(short, long, default_value = "auto")]
     permission: String,
 
-    /// Run a single prompt non-interactively then exit
+    /// Run a single prompt non-interactively then exit (alias: --print / -p)
     #[arg(short = 'q', long)]
     query: Option<String>,
+
+    /// Run a single prompt non-interactively then exit (alias for --query)
+    #[arg(short = 'p', long)]
+    print: Option<String>,
+
+    /// Output format for non-interactive mode: text (default), stream-json, json
+    #[arg(long, default_value = "text")]
+    output_format: OutputFormat,
 
     /// Maximum turns per conversation
     #[arg(long, default_value = "100")]
@@ -50,6 +81,9 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     let cwd = std::env::current_dir()?;
+
+    // --print is an alias for --query; --query takes precedence if both given
+    let single_prompt = cli.query.or(cli.print);
 
     let config = SessionConfig {
         model: cli.model.clone(),
@@ -88,37 +122,10 @@ async fn main() -> Result<()> {
 
     let mut session = SessionState::new(config, cwd);
 
-    let on_event: Arc<dyn Fn(QueryEvent) + Send + Sync> = Arc::new(|event| match event {
-        QueryEvent::TextDelta(text) => {
-            print!("{}", text);
-            let _ = io::stdout().flush();
-        }
-        QueryEvent::ToolUseStart { name, .. } => {
-            eprintln!("\n⚡ calling tool: {}", name);
-        }
-        QueryEvent::ToolResult {
-            is_error, content, ..
-        } => {
-            if is_error {
-                eprintln!("❌ tool error: {}", truncate(&content, 200));
-            } else {
-                eprintln!("✅ tool done ({})", byte_summary(&content));
-            }
-        }
-        QueryEvent::TurnComplete { .. } => {
-            println!();
-        }
-        QueryEvent::Usage {
-            input_tokens,
-            output_tokens,
-        } => {
-            eprintln!("  [tokens: {} in / {} out]", input_tokens, output_tokens);
-        }
-    });
-
-    // Single-query mode
-    if let Some(prompt) = cli.query {
+    // Single-query / print mode
+    if let Some(prompt) = single_prompt {
         session.push_message(Message::user(prompt));
+        let on_event = make_event_callback(cli.output_format);
         query(
             &mut session,
             provider.as_ref(),
@@ -127,6 +134,37 @@ async fn main() -> Result<()> {
             Some(on_event),
         )
         .await?;
+
+        if cli.output_format == OutputFormat::Json {
+            // Emit the full assistant response as a single JSON object
+            let last_assistant = session
+                .messages
+                .iter()
+                .rev()
+                .find(|m| matches!(m.role, agent_core::Role::Assistant));
+            if let Some(msg) = last_assistant {
+                let text: String = msg
+                    .content
+                    .iter()
+                    .filter_map(|b| match b {
+                        agent_core::ContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("");
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "type": "result",
+                        "text": text,
+                        "session_id": session.id,
+                        "input_tokens": session.total_input_tokens,
+                        "output_tokens": session.total_output_tokens,
+                    })
+                );
+            }
+        }
+
         return Ok(());
     }
 
@@ -134,6 +172,7 @@ async fn main() -> Result<()> {
     println!("Claude Code Rust v{}", env!("CARGO_PKG_VERSION"));
     println!("Type your message, or 'exit' / Ctrl-D to quit.\n");
 
+    let on_event = make_event_callback(OutputFormat::Text);
     let stdin = io::stdin();
     loop {
         print!("> ");
@@ -172,6 +211,83 @@ async fn main() -> Result<()> {
     );
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Event callback factory
+// ---------------------------------------------------------------------------
+
+fn make_event_callback(format: OutputFormat) -> Arc<dyn Fn(QueryEvent) + Send + Sync> {
+    Arc::new(move |event| match format {
+        OutputFormat::Text => handle_event_text(event),
+        OutputFormat::StreamJson => handle_event_stream_json(event),
+        OutputFormat::Json => {
+            // In json mode we only collect; final output is printed after the turn.
+            // Still emit tool progress to stderr so the user isn't left in the dark.
+            match &event {
+                QueryEvent::ToolUseStart { name, .. } => {
+                    eprintln!("⚡ calling tool: {}", name);
+                }
+                QueryEvent::ToolResult { is_error, content, .. } => {
+                    if *is_error {
+                        eprintln!("❌ tool error: {}", truncate(content, 200));
+                    }
+                }
+                _ => {}
+            }
+        }
+    })
+}
+
+fn handle_event_text(event: QueryEvent) {
+    match event {
+        QueryEvent::TextDelta(text) => {
+            print!("{}", text);
+            let _ = io::stdout().flush();
+        }
+        QueryEvent::ToolUseStart { name, .. } => {
+            eprintln!("\n⚡ calling tool: {}", name);
+        }
+        QueryEvent::ToolResult { is_error, content, .. } => {
+            if is_error {
+                eprintln!("❌ tool error: {}", truncate(&content, 200));
+            } else {
+                eprintln!("✅ tool done ({})", byte_summary(&content));
+            }
+        }
+        QueryEvent::TurnComplete { .. } => {
+            println!();
+        }
+        QueryEvent::Usage { input_tokens, output_tokens } => {
+            eprintln!("  [tokens: {} in / {} out]", input_tokens, output_tokens);
+        }
+    }
+}
+
+fn handle_event_stream_json(event: QueryEvent) {
+    let obj = match event {
+        QueryEvent::TextDelta(text) => {
+            serde_json::json!({ "type": "text_delta", "text": text })
+        }
+        QueryEvent::ToolUseStart { id, name } => {
+            serde_json::json!({ "type": "tool_use_start", "id": id, "name": name })
+        }
+        QueryEvent::ToolResult { tool_use_id, content, is_error } => {
+            serde_json::json!({
+                "type": "tool_result",
+                "tool_use_id": tool_use_id,
+                "content": content,
+                "is_error": is_error,
+            })
+        }
+        QueryEvent::TurnComplete { stop_reason } => {
+            serde_json::json!({ "type": "turn_complete", "stop_reason": format!("{:?}", stop_reason) })
+        }
+        QueryEvent::Usage { input_tokens, output_tokens } => {
+            serde_json::json!({ "type": "usage", "input_tokens": input_tokens, "output_tokens": output_tokens })
+        }
+    };
+    println!("{}", obj);
 }
 
 fn truncate(s: &str, max: usize) -> String {

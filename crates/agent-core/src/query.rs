@@ -202,11 +202,8 @@ pub async fn query(
             content: result_content,
         });
 
-        // The model used tools → continue the loop for the next turn
-        if stop_reason == Some(StopReason::EndTurn) {
-            debug!("stop_reason=end_turn after tool use, ending");
-            return Ok(());
-        }
+        // Tool results appended — loop back to get the model's follow-up response.
+        // Never exit here: the model must see the tool results before we can stop.
     }
 }
 

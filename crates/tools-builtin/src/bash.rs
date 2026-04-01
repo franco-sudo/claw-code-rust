@@ -66,7 +66,7 @@ impl Tool for BashTool {
                 return Ok(ToolOutput::error(format!("permission denied: {}", reason)));
             }
             PermissionDecision::Ask { message } => {
-                return Ok(ToolOutput::error(format!("needs approval: {}", message)));
+                return Ok(ToolOutput::error(format!("permission required — run with --permission interactive to approve: {}", message)));
             }
         }
 

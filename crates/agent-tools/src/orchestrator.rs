@@ -103,12 +103,14 @@ impl ToolOrchestrator {
                     };
                 }
                 PermissionDecision::Ask { message } => {
-                    // In the future this will pause and ask the user.
-                    // For now, treat as denied in non-interactive contexts.
+                    // Interactive approval is not yet wired to a UI prompt.
+                    // Surface as a tool error so the model can report it to the user
+                    // rather than silently failing. The CLI can later intercept this
+                    // by providing a PermissionPolicy that blocks and asks the user.
                     return ToolCallResult {
                         tool_use_id: call.id.clone(),
                         output: ToolOutput::error(format!(
-                            "permission required (not yet interactive): {}",
+                            "permission required — run with --permission interactive to approve: {}",
                             message
                         )),
                     };
