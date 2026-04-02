@@ -56,7 +56,34 @@ Think of it as an **agent runtime skeleton**:
 
 ## 🚀 Quick Start
 
-### Prerequisites
+### Windows 用户（推荐）🎉
+
+**一键安装，开箱即用！**
+
+```bash
+# 1. 运行安装脚本（双击即可）
+install.bat
+
+# 或者使用 PowerShell
+.\install.ps1
+```
+
+安装程序会自动：
+- ✅ 编译 release 版本
+- ✅ 创建启动器
+- ✅ 添加到 PATH（可选）
+- ✅ 配置 AI 提供商（支持智谱 GLM、Anthropic Claude）
+
+安装完成后，直接在任何目录运行：
+```cmd
+claw
+```
+
+详细安装指南请查看：[INSTALL_GUIDE.md](./INSTALL_GUIDE.md)
+
+### 手动安装
+
+#### Prerequisites
 
 - **Rust** 1.75+ ([install](https://rustup.rs/))
 - **Model backend** — one of the following:
