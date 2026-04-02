@@ -1,8 +1,10 @@
-use std::io::{self, BufRead, Write};
+use std::io::{self, Write};
 use std::sync::Arc;
 
 use anyhow::Result;
 use clap::Parser;
+use rustyline::error::ReadlineError;
+use rustyline::DefaultEditor;
 
 use claw_core::{query, Message, QueryEvent, SessionConfig, SessionState};
 use claw_permissions::PermissionMode;
@@ -185,36 +187,73 @@ async fn main() -> Result<()> {
     println!("Type your message, or 'exit' / Ctrl-D to quit.\n");
 
     let on_event = make_event_callback(OutputFormat::Text);
-    let stdin = io::stdin();
+    
+    // Initialize rustyline editor with UTF-8 and arrow key support
+    let mut rl = DefaultEditor::new()
+        .expect("Failed to initialize line editor");
+    
+    // Load history if exists
+    let history_path = dirs::home_dir()
+        .map(|h| h.join(".claw-code-rust").join("history"));
+    if let Some(ref path) = history_path {
+        if path.exists() {
+            let _ = rl.load_history(path);
+        }
+    }
+    
     loop {
         print!("> ");
         io::stdout().flush()?;
 
-        let mut line = String::new();
-        if stdin.lock().read_line(&mut line)? == 0 {
-            break;
-        }
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if line == "exit" || line == "quit" {
-            break;
-        }
+        match rl.readline("") {
+            Ok(line) => {
+                // Add to history
+                rl.add_history_entry(&line).ok();
+                
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                if line == "exit" || line == "quit" {
+                    break;
+                }
 
-        session.push_message(Message::user(line));
+                session.push_message(Message::user(line));
 
-        if let Err(e) = query(
-            &mut session,
-            resolved.provider.as_ref(),
-            Arc::clone(&registry),
-            &orchestrator,
-            Some(Arc::clone(&on_event)),
-        )
-        .await
-        {
-            eprintln!("error: {}", e);
+                if let Err(e) = query(
+                    &mut session,
+                    resolved.provider.as_ref(),
+                    Arc::clone(&registry),
+                    &orchestrator,
+                    Some(Arc::clone(&on_event)),
+                )
+                .await
+                {
+                    eprintln!("error: {}", e);
+                }
+            }
+            Err(ReadlineError::Interrupted) => {
+                // Ctrl-C
+                println!("\nUse 'exit' or Ctrl-D to quit.");
+                continue;
+            }
+            Err(ReadlineError::Eof) => {
+                // Ctrl-D
+                break;
+            }
+            Err(err) => {
+                eprintln!("Input error: {:?}", err);
+                break;
+            }
         }
+    }
+    
+    // Save history
+    if let Some(ref path) = history_path {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = rl.save_history(path);
     }
 
     eprintln!(

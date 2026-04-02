@@ -112,7 +112,10 @@ const MICRO_COMPACT_THRESHOLD: usize = 10_000;
 
 fn micro_compact(content: String) -> String {
     if content.len() > MICRO_COMPACT_THRESHOLD {
-        let mut truncated = content[..MICRO_COMPACT_THRESHOLD].to_string();
+        // 使用字符边界安全的截断，避免 UTF-8 panics
+        let char_count = content.chars().count();
+        let truncate_char_count = (char_count * MICRO_COMPACT_THRESHOLD / content.len()).min(char_count);
+        let mut truncated = content.chars().take(truncate_char_count).collect::<String>();
         truncated.push_str("\n...[truncated]");
         truncated
     } else {

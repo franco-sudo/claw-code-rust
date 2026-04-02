@@ -67,13 +67,23 @@ fn env_non_empty(name: &str) -> Option<String> {
 
 /// Build a partial config from environment variables.
 fn env_config() -> AppConfig {
-    let api_key =
-        env_non_empty("ANTHROPIC_API_KEY").or_else(|| env_non_empty("ANTHROPIC_AUTH_TOKEN"));
-    let base_url = env_non_empty("ANTHROPIC_BASE_URL");
+    // Support multiple API key providers
+    let api_key = env_non_empty("ANTHROPIC_API_KEY")
+        .or_else(|| env_non_empty("ANTHROPIC_AUTH_TOKEN"))
+        .or_else(|| env_non_empty("ZHIPU_API_KEY"))
+        .or_else(|| env_non_empty("OPENAI_API_KEY"));
+    
+    let base_url = env_non_empty("ANTHROPIC_BASE_URL")
+        .or_else(|| env_non_empty("OPENAI_BASE_URL"))
+        .or_else(|| env_non_empty("ZHIPU_BASE_URL"));
 
     // If any Anthropic auth is present, provider is anthropic
-    let provider = if api_key.is_some() {
+    let provider = if env_non_empty("ANTHROPIC_API_KEY").is_some() 
+        || env_non_empty("ANTHROPIC_AUTH_TOKEN").is_some() {
         Some("anthropic".to_string())
+    } else if env_non_empty("ZHIPU_API_KEY").is_some() {
+        // Zhipu/GLM uses OpenAI-compatible API
+        Some("openai".to_string())
     } else if env_non_empty("OPENAI_API_KEY").is_some()
         || env_non_empty("OPENAI_BASE_URL").is_some()
     {
@@ -101,7 +111,7 @@ pub fn resolve_provider(
     interactive: bool,
 ) -> Result<ResolvedProvider> {
     let env = env_config();
-    let file = load_config().unwrap_or_default();
+    let mut file = load_config().unwrap_or_default();
 
     // Merge layers: CLI > env > file
     let provider_name = cli_provider
@@ -115,7 +125,17 @@ pub fn resolve_provider(
 
     // If we have a provider, build it
     if let Some(ref name) = provider_name {
-        return build_provider(name, model_override, api_key, base_url, cli_ollama_url);
+        let resolved = build_provider(name, model_override, api_key.clone(), base_url.clone(), cli_ollama_url)?;
+        
+        // Auto-save config on first successful use (if not already saved)
+        if file.api_key.is_none() && api_key.is_some() {
+            file.provider = Some(name.clone());
+            file.api_key = api_key.clone();
+            file.base_url = base_url.clone();
+            let _ = save_config(&file); // Ignore errors, just try best effort
+        }
+        
+        return Ok(resolved);
     }
 
     // Nothing resolved — try onboarding or error
@@ -181,7 +201,15 @@ fn build_provider(
             })
         }
         "openai" => {
-            let raw_url = base_url.unwrap_or_else(|| "https://api.openai.com".into());
+            // Default to Zhipu/GLM endpoint if ZHIPU_API_KEY is set and no base_url specified
+            let default_url = if api_key.is_some() && base_url.is_none() {
+                // Check if it looks like a Zhipu key (optional heuristic)
+                "https://open.bigmodel.cn/api/paas/v4"
+            } else {
+                "https://api.openai.com"
+            };
+            
+            let raw_url = base_url.unwrap_or_else(|| default_url.to_string());
             let url = ensure_openai_v1(&raw_url);
             let model = model.unwrap_or_else(|| "gpt-4o".into());
             eprintln!("Using OpenAI-compat (url: {}, model: {})", url, model);
@@ -204,10 +232,14 @@ fn build_provider(
 }
 
 /// async-openai appends `/chat/completions` to the base URL, so Ollama/OpenAI
-/// endpoints need a `/v1` suffix. Append it if missing.
+/// endpoints need a `/v1` suffix. But some providers (like Zhipu/GLM) already
+/// include the version in their base URL, so we should not append `/v1` in those cases.
 fn ensure_openai_v1(url: &str) -> String {
     let trimmed = url.trim_end_matches('/');
-    if trimmed.ends_with("/v1") {
+    
+    // Don't append /v1 if the URL already ends with a version pattern
+    // Examples: /api/paas/v4, /v1, /api/v1, etc.
+    if trimmed.ends_with("/v1") || trimmed.contains("/v4") || trimmed.contains("/api/paas") {
         trimmed.to_string()
     } else {
         format!("{}/v1", trimmed)
@@ -301,5 +333,43 @@ pub fn ensure_ollama(url: &str, interactive: bool) -> Result<()> {
         Err(e) => {
             anyhow::bail!("Failed to start Ollama: {}", e)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ensure_openai_v1() {
+        // Zhipu/GLM - should NOT append /v1
+        assert_eq!(
+            ensure_openai_v1("https://open.bigmodel.cn/api/paas/v4"),
+            "https://open.bigmodel.cn/api/paas/v4"
+        );
+        
+        // Already has /v1 - should NOT append
+        assert_eq!(
+            ensure_openai_v1("https://api.openai.com/v1"),
+            "https://api.openai.com/v1"
+        );
+        
+        // Ollama - should append /v1
+        assert_eq!(
+            ensure_openai_v1("http://localhost:11434"),
+            "http://localhost:11434/v1"
+        );
+        
+        // Generic OpenAI-compatible - should append /v1
+        assert_eq!(
+            ensure_openai_v1("https://api.example.com"),
+            "https://api.example.com/v1"
+        );
+        
+        // With trailing slash - should handle correctly
+        assert_eq!(
+            ensure_openai_v1("https://api.example.com/"),
+            "https://api.example.com/v1"
+        );
     }
 }

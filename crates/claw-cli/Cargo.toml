@@ -27,3 +27,5 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 serde = { workspace = true }
 dirs = "6"
+# Enhanced line editing with UTF-8 and arrow key support
+rustyline = "15"
