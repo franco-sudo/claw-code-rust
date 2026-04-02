@@ -32,7 +32,7 @@ cd /Users/daijingchao/Desktop/claw2/claw-code-rust
 
 ### Step 2: 设置 API Key（仅首次）
 ```bash
-export ZHIPU_API_KEY='582ad8c5f89346d8af5eeac017b13494.2ElRPLxMBuncwzDw'
+export ZHIPU_API_KEY='XXX'
 ```
 
 ### Step 3: 启动聊天
