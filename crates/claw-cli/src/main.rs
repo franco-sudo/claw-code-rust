@@ -202,36 +202,9 @@ async fn main() -> Result<()> {
     }
     
     loop {
-        print!("> ");
-        io::stdout().flush()?;
-
-        match rl.readline("") {
-            Ok(line) => {
-                // Add to history
-                rl.add_history_entry(&line).ok();
-                
-                let line = line.trim();
-                if line.is_empty() {
-                    continue;
-                }
-                if line == "exit" || line == "quit" {
-                    break;
-                }
-
-                session.push_message(Message::user(line));
-
-                if let Err(e) = query(
-                    &mut session,
-                    resolved.provider.as_ref(),
-                    Arc::clone(&registry),
-                    &orchestrator,
-                    Some(Arc::clone(&on_event)),
-                )
-                .await
-                {
-                    eprintln!("error: {}", e);
-                }
-            }
+        // 使用 readline 的 prompt 参数显示 >
+        let line = match rl.readline("> ") {
+            Ok(line) => line,
             Err(ReadlineError::Interrupted) => {
                 // Ctrl-C
                 println!("\nUse 'exit' or Ctrl-D to quit.");
@@ -245,7 +218,33 @@ async fn main() -> Result<()> {
                 eprintln!("Input error: {:?}", err);
                 break;
             }
+        };
+        
+        // Add to history
+        rl.add_history_entry(&line).ok();
+        
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
         }
+        if line == "exit" || line == "quit" {
+            break;
+        }
+
+        session.push_message(Message::user(line));
+
+        if let Err(e) = query(
+            &mut session,
+            resolved.provider.as_ref(),
+            Arc::clone(&registry),
+            &orchestrator,
+            Some(Arc::clone(&on_event)),
+        )
+        .await
+        {
+            eprintln!("error: {}", e);
+        }
+        // query 完成后不显示 > ，下一轮循环开始会自动显示
     }
     
     // Save history
@@ -295,26 +294,31 @@ fn handle_event_text(event: QueryEvent) {
             let _ = io::stdout().flush();
         }
         QueryEvent::ToolUseStart { name, .. } => {
-            eprintln!("\n⚡ calling tool: {}", name);
+            eprintln!("\n⚡  正在调用工具：{}", name);
         }
         QueryEvent::ToolResult {
             is_error, content, ..
         } => {
             if is_error {
-                eprintln!("❌ tool error: {}", truncate(&content, 200));
+                eprintln!("❌ 工具执行失败：{}", truncate(&content, 200));
             } else {
-                eprintln!("✅ tool done ({})", byte_summary(&content));
+                eprintln!("✅ 工具完成 ({})", byte_summary(&content));
             }
         }
-        QueryEvent::TurnComplete { .. } => {
-            println!();
+        QueryEvent::TurnComplete { stop_reason: _ } => {
+            // 不显示技术性的停止原因，只显示友好的结束标记
+            eprintln!();
+            eprintln!("---");
+            eprintln!("✅ 回答完成");
         }
         QueryEvent::Usage {
             input_tokens,
             output_tokens,
-            ..
+            cache_creation_input_tokens: _,
+            cache_read_input_tokens: _,
         } => {
-            eprintln!("  [tokens: {} in / {} out]", input_tokens, output_tokens);
+            // 使用淡色显示统计信息（ANSI 灰色码）
+            eprintln!("\r\n\x1b[90m📊 Tokens: 输入 {} | 输出 {}\x1b[0m", input_tokens, output_tokens);
         }
     }
 }

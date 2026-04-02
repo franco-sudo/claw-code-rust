@@ -274,7 +274,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "claw-cli"
-version = "0.2.0"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -297,7 +297,7 @@ dependencies = [
 
 [[package]]
 name = "claw-compact"
-version = "0.2.0"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -310,7 +310,7 @@ dependencies = [
 
 [[package]]
 name = "claw-core"
-version = "0.2.0"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -331,7 +331,7 @@ dependencies = [
 
 [[package]]
 name = "claw-mcp"
-version = "0.2.0"
+version = "0.3.9"
 dependencies = [
  "async-trait",
  "serde",
@@ -343,7 +343,7 @@ dependencies = [
 
 [[package]]
 name = "claw-permissions"
-version = "0.2.0"
+version = "0.3.9"
 dependencies = [
  "async-trait",
  "serde",
@@ -355,7 +355,7 @@ dependencies = [
 
 [[package]]
 name = "claw-provider"
-version = "0.2.0"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "async-anthropic",
@@ -373,7 +373,7 @@ dependencies = [
 
 [[package]]
 name = "claw-tasks"
-version = "0.2.0"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -388,7 +388,7 @@ dependencies = [
 
 [[package]]
 name = "claw-tools"
-version = "0.2.0"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "async-trait",
